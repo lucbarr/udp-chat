@@ -1,8 +1,6 @@
 // standard IO libraries
-#include<stdio.h>
 #include<string.h>
 #include<stdlib.h>
-#include<malloc.h>
 // networking useful libraries
 #include<arpa/inet.h>
 #include<sys/socket.h>
@@ -11,57 +9,32 @@
 // Linux system library
 #include<unistd.h>
 
-#define SERVER "172.16.36.46"
-#define BUFLEN 512  //Max length of buffer
-#define PORT 31337   //The port on which to send data
+#include "stack.h"
+
 
 #define OUTRANGE(x) ((x<1) || (x>65535))
 
+// Error handling auxiliar function
 void mayday(char *s){
   perror(s);
   exit(1);
 }
 
-int inputAvailable() {
-  struct timeval tv;
-  fd_set fds;
-  tv.tv_sec = 0;
-  tv.tv_usec = 0;
-  FD_ZERO(&fds);
-  FD_SET(STDIN_FILENO, &fds);
-  select(STDIN_FILENO+1, &fds, NULL, NULL, &tv);
-  return (FD_ISSET(0, &fds));
-}
-// Definition of stack for i/o nonblocking reading
-typedef struct Stack{
-  char buf[BUFLEN];
-  size_t top;
-} Stack;
 
-Stack* newstack(){
-  Stack* new_stack = (Stack*) malloc(sizeof(Stack));
-  memset(new_stack,0,sizeof(*new_stack));
-  return new_stack;
-}
-
-void closestack(Stack* stack){
-  free(stack);
-}
-
-void push(Stack* stack, char c){
-  if (stack->top >= BUFLEN)
-    fprintf(stderr, "push() error: buffer overflow" );
-  else{
-    stack->buf[stack->top]=c;
-    stack->top ++;
+int getUser(char* buf){
+  FILE *fp;
+  /* Open the command for reading. */
+  fp = popen("whoami", "r");
+  if (fp == NULL) {
+    printf("Failed to get user. Maybe you can't run whoami command, check credentials\n" );
+    return 0;
   }
+  fscanf(fp, "%s" , buf); // maybe it's a bad idea to use scanf,
+                          // buffer overflow can happen here.
+  /* close */
+  pclose(fp);
+  return 1;
 }
-
-void flush(Stack* stack, char* buf){
-  strcpy(buf,stack->buf);
-  memset(stack,0,sizeof(*stack));
-}
-////////////////////////////////////////////////////
 
 int main(int argc , char* argv[]){
   struct sockaddr_in pin_addr;
@@ -70,6 +43,8 @@ int main(int argc , char* argv[]){
   int tx, rx;
   char rx_buf[BUFLEN];
   char tx_buf[BUFLEN];
+  char username[50];
+  char c[1];
   Stack* st = newstack();
   // Checa quantidade de argumentos
   if (argc < 4){
@@ -89,40 +64,52 @@ int main(int argc , char* argv[]){
   if ((rx=socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
     mayday("Nao pode abrir socket()");
   }
-  // Set socket to non-blocking //
+  // Set socket to non-blocking 
   fcntl(rx, F_SETFL, O_NONBLOCK);
   fcntl(tx, F_SETFL, O_NONBLOCK);
+  // Set stdin to non-blocking too
   fcntl(0, F_SETFL, O_NONBLOCK);
-  // Inicializa sockaddr_in de saida (host remoto)
+  // tx socket parameters setting
   memset(&pout_addr, 0, sizeof(pout_addr));
   pout_addr.sin_family = AF_INET;
   pout_addr.sin_port = htons(remote_port);
+  // you got to set his address, otherwise who is him?
   if (inet_aton(argv[2], &pout_addr.sin_addr) == 0) {
     printf("Endereço invalido %s\n", argv[2]);
     return 1;
   }
-  // Inicializa sockaddr_in de entrada
+  // rx socket parameters setting
   memset(&pin_addr, 0, sizeof(pin_addr));
   pin_addr.sin_family = AF_INET;
   pin_addr.sin_port = htons(local_port);
+  // you know who you are, so pick any address (OS takes care of it)
   pin_addr.sin_addr.s_addr = htonl(INADDR_ANY);
   bind(rx, (struct sockaddr*)(&pin_addr), sizeof pin_addr);
+  // clear buffer so first input is free of litter
   memset(rx_buf, 0 , sizeof rx_buf);
-  char c[1];
+  getUser(username);
+  char aux[256];
   while(1){
+    // Buffer for stdin reading
+    // condition is if stdin is clear
     while(read(0,c,1)>0){
       if (c[0]=='\n'){
+        // if endline , flushes stack into tx_buf for printing
         flush(st,tx_buf);
-        printf ("Message:%s\n",tx_buf);
-        if (sendto(tx, tx_buf , strlen(tx_buf) , 0 , (struct sockaddr *) &pout_addr, sizeof(pout_addr))==-1) {
+        printf ("[%s]:%s\n",username,tx_buf);
+        sprintf(aux, "[%s]:%s\n",username,tx_buf);
+        if (sendto(tx, aux , strlen(aux) , 0 , (struct sockaddr *) &pout_addr, sizeof(pout_addr))==-1) {
           mayday("sendto()");
         }
       } else {
+        // if not endline, puts into stack buffer
         push(st,c[0]);
       }
     }
+
+    // Nonblocking reading for receiving messages
     if (read(rx,rx_buf,sizeof(rx_buf)) > 0){
-      printf ("Received message: %s\n",rx_buf);
+      printf ("%s\n",rx_buf);
       memset(rx_buf, 0 , sizeof rx_buf);
     }
   }
