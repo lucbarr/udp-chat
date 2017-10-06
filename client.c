@@ -26,7 +26,7 @@ int getUser(char* buf){
   /* Open the command for reading. */
   fp = popen("whoami", "r");
   if (fp == NULL) {
-    printf("Failed to get user. Maybe you can't run whoami command, check credentials\n" );
+    printf("Failed to get user. Maybe you can't run whoami command. Check credentials\n" );
     return 0;
   }
   fscanf(fp, "%s" , buf); // maybe it's a bad idea to use scanf,
@@ -87,7 +87,7 @@ int main(int argc , char* argv[]){
   bind(rx, (struct sockaddr*)(&pin_addr), sizeof pin_addr);
   // clear buffer so first input is free of litter
   memset(rx_buf, 0 , sizeof rx_buf);
-  getUser(username);
+  if(!getUser(username)) strcpy(username, "Anonymous");
   char aux[256];
   while(1){
     // Buffer for stdin reading
